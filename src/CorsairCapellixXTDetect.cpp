@@ -28,9 +28,18 @@ std::vector<RGBController*> DetectCorsairCapellixXT(
         while(cur)
         {
             /*---------------------------------------------------------*\
-            | We want interface 0 — the bidirectional control channel   |
+            | We want interface 0 — the bidirectional control channel.  |
+            |                                                           |
+            | Match it the way OpenRGB's own detector does: on the HID  |
+            | usage (Usage Page 0xFF42, Usage 0x01). interface_number   |
+            | is reliable on Linux hidraw but comes back as -1 from the  |
+            | Windows and macOS hidapi backends, so keying off it alone  |
+            | detects nothing there. Interface 1 shares the usage page   |
+            | but reports Usage 0x02, so the usage check keeps them      |
+            | distinct on every platform.                                |
             \*---------------------------------------------------------*/
-            if(cur->interface_number == 0)
+            if((cur->usage_page == 0xFF42 && cur->usage == 0x01)
+               || cur->interface_number == 0)
             {
                 hid_device* dev = hid_open_path(cur->path);
 
