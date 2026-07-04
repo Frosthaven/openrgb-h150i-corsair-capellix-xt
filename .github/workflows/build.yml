@@ -148,54 +148,56 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # macOS (arm64 Apple Silicon + x86_64 Intel)
+  # Temporarily disabled — re-enable by uncommenting this job and adding
+  # build-macos back to the release job's `needs` list below.
   # ---------------------------------------------------------------------------
-  build-macos:
-    name: Build (macOS ${{ matrix.label }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: arm64
-            runner: macos-latest
-          - label: x86_64
-            runner: macos-15-intel
-
-    steps:
-      - name: Checkout plugin source
-        uses: actions/checkout@v4
-
-      - name: Checkout OpenRGB source
-        uses: actions/checkout@v4
-        with:
-          repository: CalcProgrammer1/OpenRGB
-          ref: ${{ env.OPENRGB_TAG }}
-          path: OpenRGB
-
-      - name: Install dependencies
-        run: |
-          brew install qt@5 hidapi libusb mbedtls pkg-config 2>&1 | grep -v 'already installed'
-          echo "$(brew --prefix qt@5)/bin" >> $GITHUB_PATH
-
-      - name: Build plugin
-        run: |
-          export OPENRGB_DIR=${{ github.workspace }}/OpenRGB
-          export PKG_CONFIG_PATH="$(brew --prefix hidapi)/lib/pkgconfig:$(brew --prefix qt@5)/lib/pkgconfig:$PKG_CONFIG_PATH"
-          qmake CorsairCommanderCore.pro
-          make -j$(sysctl -n hw.ncpu)
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenRGBCorsairCommanderCorePlugin-macos-${{ matrix.label }}
-          path: libOpenRGBCorsairCommanderCorePlugin.dylib
+  # build-macos:
+  #   name: Build (macOS ${{ matrix.label }})
+  #   runs-on: ${{ matrix.runner }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - label: arm64
+  #           runner: macos-latest
+  #         - label: x86_64
+  #           runner: macos-15-intel
+  #
+  #   steps:
+  #     - name: Checkout plugin source
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Checkout OpenRGB source
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: CalcProgrammer1/OpenRGB
+  #         ref: ${{ env.OPENRGB_TAG }}
+  #         path: OpenRGB
+  #
+  #     - name: Install dependencies
+  #       run: |
+  #         brew install qt@5 hidapi libusb mbedtls pkg-config 2>&1 | grep -v 'already installed'
+  #         echo "$(brew --prefix qt@5)/bin" >> $GITHUB_PATH
+  #
+  #     - name: Build plugin
+  #       run: |
+  #         export OPENRGB_DIR=${{ github.workspace }}/OpenRGB
+  #         export PKG_CONFIG_PATH="$(brew --prefix hidapi)/lib/pkgconfig:$(brew --prefix qt@5)/lib/pkgconfig:$PKG_CONFIG_PATH"
+  #         qmake CorsairCommanderCore.pro
+  #         make -j$(sysctl -n hw.ncpu)
+  #
+  #     - name: Upload artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: OpenRGBCorsairCommanderCorePlugin-macos-${{ matrix.label }}
+  #         path: libOpenRGBCorsairCommanderCorePlugin.dylib
 
   # ---------------------------------------------------------------------------
   # Draft release with all artifacts
   # ---------------------------------------------------------------------------
   release:
     name: Create Draft Release
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

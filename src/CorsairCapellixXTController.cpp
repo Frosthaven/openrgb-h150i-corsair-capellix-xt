@@ -311,6 +311,43 @@ void CorsairCapellixXTController::SetHardwareMode()
               CMD_HARDWARE_MODE_2, CMD_HARDWARE_MODE_3});
 }
 
+/*---------------------------------------------------------------------*\
+| Force all 6 RGB ports into the 34-LED "QL fan" slot layout.           |
+|                                                                       |
+| Without this the device leaves fan ports 2..6 disabled and only the   |
+| pump and the first fan light up (this is exactly the Windows bug we    |
+| were chasing). Mirrors OpenRGB's CorsairCommanderCore SetFanMode.     |
+\*---------------------------------------------------------------------*/
+
+void CorsairCapellixXTController::SetFanMode()
+{
+    /*-----------------------------------------------------------------*\
+    | AIO / 6-QL-fan mode config: [0x07, 0x01, 0x08, then {0x01,0x06}    |
+    | pairs for each of the 6 ports].                                    |
+    \*-----------------------------------------------------------------*/
+    std::vector<uint8_t> buf(15, 0x00);
+    buf[0] = 0x07;
+    buf[1] = 0x01;
+    buf[2] = 0x08;
+    for(int i = 3; i < 15; i += 2)
+    {
+        buf[i]     = 0x01;
+        buf[i + 1] = 0x06;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(io_mutex);
+
+    WriteEndpoint({MODE_SET_FAN_MODE, 0x00},
+                  {DATA_TYPE_FAN_MODE_0, DATA_TYPE_FAN_MODE_1},
+                  buf);
+
+    /*-----------------------------------------------------------------*\
+    | Wake the device back into software mode so the new fan mode takes  |
+    | effect (re-init if the mode actually changed).                     |
+    \*-----------------------------------------------------------------*/
+    SetSoftwareMode();
+}
+
 void CorsairCapellixXTController::InitLedPorts()
 {
     for(int i = 0; i < CC_MAX_LED_CHANNELS; i++)
@@ -382,15 +419,26 @@ void CorsairCapellixXTController::Initialize()
     ReadFirmware();
     SetSoftwareMode();
     InitLedPorts();
+
+    /*-----------------------------------------------------------------*\
+    | Force all 6 RGB ports into the 34-LED "QL fan" slot mode so every  |
+    | fan port accepts color data. Must happen before the first color    |
+    | write; otherwise only the pump and the first fan light up.         |
+    |                                                                    |
+    | This AIO fan-mode command does not apply to the standalone XT hub  |
+    | (which uses a different port layout), so skip it there.            |
+    \*-----------------------------------------------------------------*/
+    if(product_id != COMMANDER_CORE_XT_PID)
+    {
+        SetFanMode();
+    }
+
     QueryLEDConfig();
 
     /*-----------------------------------------------------------------*\
-    | Open color endpoint: close then open (stays open for writes)      |
+    | The color endpoint is opened and closed per write in              |
+    | WriteEndpoint(), so there is nothing to open here.                |
     \*-----------------------------------------------------------------*/
-    Transfer({CMD_CLOSE_ENDPOINT_0, CMD_CLOSE_ENDPOINT_1, CMD_CLOSE_ENDPOINT_2},
-             {MODE_SET_COLOR});
-    Transfer({CMD_OPEN_COLOR_ENDPOINT_0, CMD_OPEN_COLOR_ENDPOINT_1},
-             {MODE_SET_COLOR});
 
     /*-----------------------------------------------------------------*\
     | Apply the pump curve once immediately so the pump goes quiet at    |
@@ -417,43 +465,37 @@ void CorsairCapellixXTController::Initialize()
 | CMD_WRITE_COLOR (first chunk) / CMD_WRITE_COLOR_NEXT (rest).         |
 \*---------------------------------------------------------------------*/
 
-void CorsairCapellixXTController::SendColors(const std::vector<uint8_t>& color_data)
+void CorsairCapellixXTController::WriteEndpoint(
+    const std::vector<uint8_t>& endpoint_mode,
+    const std::vector<uint8_t>& data_type,
+    const std::vector<uint8_t>& payload)
 {
-    if(color_data.empty())
-    {
-        return;
-    }
-
-    /*-----------------------------------------------------------------*\
-    | Hold the device lock for the whole multi-chunk write so a pump     |
-    | update on the keepalive thread can't interleave on the HID pipe    |
-    \*-----------------------------------------------------------------*/
     std::lock_guard<std::recursive_mutex> io_lock(io_mutex);
 
     /*-----------------------------------------------------------------*\
-    | Store last colors for keepalive resend                            |
+    | Open the endpoint for writing (0x0D 0x00 + endpoint mode).        |
     \*-----------------------------------------------------------------*/
-    {
-        std::lock_guard<std::mutex> lock(color_mutex);
-        last_colors = color_data;
-    }
+    Transfer({CMD_OPEN_COLOR_ENDPOINT_0, CMD_OPEN_COLOR_ENDPOINT_1}, endpoint_mode);
 
     /*-----------------------------------------------------------------*\
-    | Build write buffer                                                |
+    | Build write buffer:                                               |
+    |   [0..1] = LE uint16 size (len(payload) + 2)                      |
+    |   [2..3] = 0x00 0x00 padding                                      |
+    |   [4..5] = data type                                             |
+    |   [6..]  = payload                                                |
     \*-----------------------------------------------------------------*/
-    uint16_t size = (uint16_t)(color_data.size() + 2);
+    uint16_t size = (uint16_t)(payload.size() + 2);
 
     std::vector<uint8_t> write_buf;
     write_buf.push_back(size & 0xFF);           // LE size low
     write_buf.push_back((size >> 8) & 0xFF);    // LE size high
     write_buf.push_back(0x00);                  // padding
     write_buf.push_back(0x00);                  // padding
-    write_buf.push_back(DATA_TYPE_SET_COLOR_0); // 0x12
-    write_buf.push_back(DATA_TYPE_SET_COLOR_1); // 0x00
-    write_buf.insert(write_buf.end(), color_data.begin(), color_data.end());
+    write_buf.insert(write_buf.end(), data_type.begin(), data_type.end());
+    write_buf.insert(write_buf.end(), payload.begin(), payload.end());
 
     /*-----------------------------------------------------------------*\
-    | Chunk and send                                                    |
+    | Chunk and send (first chunk 0x06 0x00, rest 0x07 0x00).           |
     \*-----------------------------------------------------------------*/
     size_t offset = 0;
     int chunk_num = 0;
@@ -481,6 +523,39 @@ void CorsairCapellixXTController::SendColors(const std::vector<uint8_t>& color_d
         offset += chunk_size;
         chunk_num++;
     }
+
+    /*-----------------------------------------------------------------*\
+    | Close the endpoint. Reopening it on every write (rather than       |
+    | leaving it open) is what keeps Windows from desyncing and painting  |
+    | every LED red.                                                     |
+    \*-----------------------------------------------------------------*/
+    Transfer({CMD_CLOSE_ENDPOINT_0, CMD_CLOSE_ENDPOINT_1});
+}
+
+void CorsairCapellixXTController::SendColors(const std::vector<uint8_t>& color_data)
+{
+    if(color_data.empty())
+    {
+        return;
+    }
+
+    /*-----------------------------------------------------------------*\
+    | Hold the device lock for the whole open/write/close so a pump      |
+    | update on the keepalive thread can't interleave on the HID pipe    |
+    \*-----------------------------------------------------------------*/
+    std::lock_guard<std::recursive_mutex> io_lock(io_mutex);
+
+    /*-----------------------------------------------------------------*\
+    | Store last colors for keepalive resend                            |
+    \*-----------------------------------------------------------------*/
+    {
+        std::lock_guard<std::mutex> lock(color_mutex);
+        last_colors = color_data;
+    }
+
+    WriteEndpoint({MODE_SET_COLOR, 0x00},
+                  {DATA_TYPE_SET_COLOR_0, DATA_TYPE_SET_COLOR_1},
+                  color_data);
 
     last_commit_time = std::chrono::steady_clock::now();
 }

@@ -112,11 +112,13 @@ void RGBController_CorsairCapellixXT::DeviceUpdateLEDs()
     |   ...                                                             |
     \*-----------------------------------------------------------------*/
     static const unsigned int LEDS_PER_FAN_SLOT = 34;
+    static const unsigned int NUM_FAN_PORTS     = 6;
 
     std::vector<ChannelInfo>& ch = controller->GetChannels();
 
     std::vector<uint8_t> color_data;
-    unsigned int color_idx = 0;
+    unsigned int color_idx    = 0;
+    unsigned int fan_ports    = 0;
 
     for(unsigned int zone_idx = 0; zone_idx < ch.size(); zone_idx++)
     {
@@ -132,9 +134,28 @@ void RGBController_CorsairCapellixXT::DeviceUpdateLEDs()
         /*-------------------------------------------------------------*\
         | Pad fan ports (zone > 0) to 34-LED slots                      |
         \*-------------------------------------------------------------*/
-        if(zone_idx != 0 && led_count < LEDS_PER_FAN_SLOT)
+        if(zone_idx != 0)
         {
-            color_data.resize(color_data.size() + (LEDS_PER_FAN_SLOT - led_count) * 3, 0x00);
+            if(led_count < LEDS_PER_FAN_SLOT)
+            {
+                color_data.resize(color_data.size() + (LEDS_PER_FAN_SLOT - led_count) * 3, 0x00);
+            }
+            fan_ports++;
+        }
+    }
+
+    /*-----------------------------------------------------------------*\
+    | The AIO controllers are forced into 6-fan-port mode (see           |
+    | SetFanMode), so the firmware expects a full frame: pump + 6 *      |
+    | 34-LED fan slots. Pad any ports that aren't physically connected    |
+    | with black so the buffer length matches (otherwise colors land     |
+    | wrong). The standalone XT hub uses a different layout — leave it.  |
+    \*-----------------------------------------------------------------*/
+    if(controller->GetProductID() != COMMANDER_CORE_XT_PID)
+    {
+        for(; fan_ports < NUM_FAN_PORTS; fan_ports++)
+        {
+            color_data.resize(color_data.size() + LEDS_PER_FAN_SLOT * 3, 0x00);
         }
     }
 

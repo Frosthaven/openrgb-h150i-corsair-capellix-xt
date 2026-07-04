@@ -76,6 +76,12 @@ static const size_t COMMANDER_CORE_PID_COUNT = 3;
 #define DATA_TYPE_SET_COLOR_0       0x12
 #define DATA_TYPE_SET_COLOR_1       0x00
 
+// Fan-mode endpoint: forces all 6 RGB ports into the 34-LED "QL fan" slot
+// layout so every fan port accepts color data (matches OpenRGB SetFanMode).
+#define MODE_SET_FAN_MODE           0x1E
+#define DATA_TYPE_FAN_MODE_0        0x0D
+#define DATA_TYPE_FAN_MODE_1        0x00
+
 // LED status byte meaning
 #define LED_STATUS_CONNECTED        0x02
 
@@ -157,6 +163,7 @@ public:
     void                        Initialize();
     void                        SetSoftwareMode();
     void                        SetHardwareMode();
+    void                        SetFanMode();
     void                        QueryLEDConfig();
     void                        SendColors(const std::vector<uint8_t>& color_data);
 
@@ -248,4 +255,15 @@ private:
 
     void                        ReadFirmware();
     void                        InitLedPorts();
+
+    /*-----------------------------------------------------------------*\
+    | Generic endpoint write: open -> chunked write -> close.           |
+    | Used for both color writes (endpoint 0x22) and the fan-mode        |
+    | write (endpoint 0x1E). The endpoint is (re)opened on every call —  |
+    | on Windows, leaving the color endpoint open across writes desyncs  |
+    | the device and every LED turns red.                                |
+    \*-----------------------------------------------------------------*/
+    void                        WriteEndpoint(const std::vector<uint8_t>& endpoint_mode,
+                                              const std::vector<uint8_t>& data_type,
+                                              const std::vector<uint8_t>& payload);
 };
