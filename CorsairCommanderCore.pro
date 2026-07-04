@@ -103,8 +103,10 @@ macx {
 }
 
 win32 {
-    CONFIG  += link_pkgconfig
-    PKGCONFIG += hidapi
+    # Link the same prebuilt hidapi OpenRGB bundles and copies next to
+    # OpenRGB.exe, so the plugin's hidapi.dll import is already satisfied at
+    # runtime by the host's own copy — nothing extra to distribute.
+    LIBS += -L$$OPENRGB_DIR/dependencies/hidapi-win/x64/ -lhidapi
 }
 
 #----------------------------------------------------------------------
