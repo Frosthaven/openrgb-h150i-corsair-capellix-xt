@@ -134,9 +134,10 @@ jobs:
       - name: Collect artifact
         shell: pwsh
         run: |
+          $target = Join-Path $PWD "OpenRGBCorsairCommanderCorePlugin.dll"
           $dll = Get-ChildItem -Recurse -Filter OpenRGBCorsairCommanderCorePlugin.dll | Select-Object -First 1
           if (-not $dll) { Write-Error "Plugin DLL not found after build"; exit 1 }
-          Copy-Item $dll.FullName -Destination OpenRGBCorsairCommanderCorePlugin.dll -Force
+          if ($dll.FullName -ne $target) { Copy-Item $dll.FullName -Destination $target -Force }
           Write-Host "Collected: $($dll.FullName)"
 
       - name: Upload artifact
